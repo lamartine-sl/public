@@ -24,7 +24,7 @@ def quit_script(seconds):
 print("Press the key you want to press in the script:")
 key_stroke = keyboard.read_key()
 
-# Print some instructions in the console
+# Print instructions in the console
 print('Remember, to stop the script press the "Esc" key, the script will starts in 10 seconds...')
 
 # Wait 10 seconds 
