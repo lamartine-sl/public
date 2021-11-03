@@ -12,7 +12,7 @@ except:
     os.system("pip install keyboard")
     import keyboard
 
-# Function to exit script if user presses "q"
+# Function to exit script if user presses "esc"
 def quit_script(seconds):
     startTime = time.time()
     while True:
@@ -21,10 +21,11 @@ def quit_script(seconds):
         elif time.time() - startTime > seconds:
             return False
 
-# Print some instructions in the console
+# Get key
 print("Press the key you want to press in the script:")
 key_stroke = keyboard.read_key()
 
+# Print some instructions in the console
 print('Remember, to stop the script press the "Esc" key, the script will starts in 10 seconds...')
 
 # Wait 10 seconds 
