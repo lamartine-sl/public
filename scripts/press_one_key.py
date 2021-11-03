@@ -15,11 +15,10 @@ except:
 # Function to exit script if user presses "esc"
 def quit_script(seconds):
     startTime = time.time()
-    while True:
+    while time.time() - startTime < seconds:
         if keyboard.is_pressed("esc"):
             return True
-        elif time.time() - startTime > seconds:
-            return False
+    return False
 
 # Get key
 print("Press the key you want to press in the script:")
