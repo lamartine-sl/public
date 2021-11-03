@@ -1,3 +1,7 @@
+# SCRIPT TO PRESS KEYS ON WINDOWS
+# Create by: Ney Moresco
+# Date: 2021-11-03
+
 import time, random
 
 # Import keyboard package, if not installed will download
@@ -21,7 +25,7 @@ def quit_script(seconds):
 print("Press the key you want to press in the script:")
 key_stroke = keyboard.read_key()
 
-print('Remember, to stop the script press the "Esc" key')
+print('Remember, to stop the script press the "Esc" key, the script will starts in 10 seconds...')
 
 # Wait 10 seconds 
 time.sleep(10)
