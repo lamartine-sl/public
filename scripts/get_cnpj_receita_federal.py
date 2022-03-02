@@ -1,124 +1,196 @@
 # SCRIPT TO DOWNLOAD AND LOAD FEDERAL REVENUE CNPJ
 # Create by: Ney Moresco
 # Date: 2021-09-21
+# Update: 2022-03-02
 
-# Import packages
-from sqlalchemy import create_engine
-import pandas as pd
-import os
-import zipfile
-import time
 import io
+import os
+import time
+import zipfile
+import re
+import requests
+import pandas as pd
+from sqlalchemy import create_engine
 
-# Function download files
-def download_file(url: str, dest_file: str):
-    import requests
-    req = requests.get(url)
-    file = open(dest_file, 'wb')
-    for chunk in req.iter_content(100000):
-        file.write(chunk)
-    file.close()
-    return True
+# Set Global Variables
+USER = 'user_db'
+PASSWORD = 'password'
+SERVER_IP = 'server_ip:port' # Server IP + Port
+SCHEMA = 'schema_name'
 
-# Set Variables
-user = 'username'
-password = 'password_postgres'
-serverip = 'ip_postgres'
-schema = 'name_of_schema'
+class base_cnpj:
+    # Function download files
+    def download_file(self, url: str, dest_file: str):
+        req = requests.get(url)
+        file = open(dest_file, 'wb')
+        for chunk in req.iter_content(100000):
+            file.write(chunk)
+        file.close()
+        return True
 
-# Create postgresql engine 
-engine = create_engine(f'postgresql://{user}:{password}@{serverip}/postgres?options=-csearch_path%3D{schema}')
+    def __init__(self, user, password, ip_postgres, schema):
+        # Set Variables
+        self.user = user
+        self.password = password
+        self.serverip = ip_postgres
+        self.schema = schema
+        self.files = []
+        self.uploaded = []
+        self.engine = None
 
-# Set URL and Path
-url = 'http://200.152.38.155/CNPJ/'
-path = 'zip_files/'
+    def get_last_update(self):
+        self.HTML = requests.get('https://www.gov.br/receitafederal/pt-br/assuntos/orientacao-tributaria/cadastros/consultas/dados-publicos-cnpj')
+        return self.HTML.text.split('Atualizado em')[1][36:46]
 
-# Create an array with filenames and start download (EMPRESAS)
-files = [f'K3241.K03200Y{i}.D10814.EMPRECSV.zip' for i in range(10)]
-for i in files:
-    download_file(url + i, path + i)
+    def start_download(self):
+        # Create an array with filenames and start download
+        self.urls = [f'http://{i}.zip' for i in re.findall('http://(.*?).zip', self.HTML.text)][:-2]
+        self.files = [x.split('/')[-1] for x in obj.urls]
 
-# Create an array with filenames and start download (ESTABELECIMENTOS)
-files = [f'K3241.K03200Y{i}.D10814.ESTABELE.zip' for i in range(10)]
-for i in files:
-    download_file(url + i, path + i)
+        for i in self.urls:
+            self.download_file(i, i.split('/')[-1])
 
-# Create an array with filenames and start download (Auxiliary bases)
-files = ['F.K03200$Z.D10814.QUALSCSV.zip', 'F.K03200$Z.D10814.MOTICSV.zip', 'F.K03200$Z.D10814.CNAECSV.zip', 'F.K03200$W.SIMPLES.CSV.D10814.zip', 'F.K03200$Z.D10814.MUNICCSV.zip',
-         'F.K03200$Z.D10814.NATJUCSV.zip', 'F.K03200$Z.D10814.PAISCSV.zip']
-for i in files:
-    download_file(url + i, path + i)
+    def psql_insert_copy(table, conn, keys, data_iter):
+        import csv
+        from io import StringIO
+        """
+        Execute SQL statement inserting data
 
-# Definindo Layout das bases para carga no Banco de dados
-# Set layout, in order to facilitate the reading of the base a pattern was created in the first two digits, being:
-# st = string
-# cd = code
-# dt = date
-layout_files = {'EMPRE': {'columns':
-                          {'st_cnpj_base': str, 'st_razao_social': str, 'cd_natureza_juridica': str, 'cd_qualificacao': str,
-                              'vl_capital_social': str, 'cd_porte_empresa': str, 'st_ente_federativo': str},
-                          'table_name_db': 'tb_empresa'},
-                'ESTABELE': {'columns':
-                             {'st_cnpj_base': str, 'st_cnpj_ordem': str, 'st_cnpj_dv': str, 'cd_matriz_filial': str, 'st_nome_fantasia': str, 'cd_situacao_cadastral': str,
-                              'dt_situacao_cadastral': str, 'cd_motivo_situacao_cadastral': str, 'st_cidade_exterior': str, 'cd_pais': str, 'dt_inicio_atividade': str,
-                              'cd_cnae_principal': str, 'cd_cnae_secundario': str, 'st_tipo_logradouro': str, 'st_logradouro': str, 'st_numero': str, 'st_complemento': str,
-                              'st_bairro': str, 'st_cep': str, 'st_uf': str, 'cd_municipio': str, 'st_ddd1': str, 'st_telefone1': str, 'st_ddd2': str, 'st_telefone2': str,
-                              'st_ddd_fax': str, 'st_fax': str, 'st_email': str, 'st_situacao_especial': str, 'dt_situacao_especial': str
-                              }, 'table_name_db': 'tb_estabelecimento'},
-                'SIMPLES': {'columns':
-                            {'st_cnpj_base': str, 'st_opcao_simples': str, 'dt_opcao_simples': str, 'dt_exclusao_simples': str,
-                             'st_opcao_mei': str, 'dt_opcao_mei': str, 'dt_exclusao_mei': str
-                             }, 'table_name_db': 'tb_dados_simples'},
-                'SOCIO': {'columns':
-                           {'st_cnpj_base': str, 'cd_tipo': str, 'st_nome': str, 'st_cpf_cnpj': str, 'cd_qualificacao': str, 'dt_entrada': str,
-                            'cd_pais': str, 'st_representante': str, 'st_nome_representante': str, 'cd_qualificacao_representante': str, 'cd_faixa_etaria': str},
-                          'table_name_db': 'tb_socio'},
-                'PAIS': {'columns': {'cd_pais': str, 'st_pais': str}, 'table_name_db': 'tb_pais'},
-                'MUNIC': {'columns': {'cd_municipio': str, 'st_municipio': str}, 'table_name_db': 'tb_municipio'},
-                'QUALS': {'columns': {'cd_qualificacao': str, 'st_qualificacao': str}, 'table_name_db': 'tb_qualificacao_socio'},
-                'NATJU': {'columns': {'cd_natureza_juridica': str, 'st_natureza_juridica': str}, 'table_name_db': 'tb_natureza_juridica'},
-                'MOTI': {'columns': {'cd_motivo_situacao_cadastral': str, 'st_motivo_situacao_cadastral': str}, 'table_name_db': 'tb_motivo_situacao_cadastral'},
-                'CNAE': {'columns': {'cd_cnae': str, 'st_cnae': str}, 'table_name_db': 'tb_cnae'}
-                }
+        Parameters
+        ----------
+        table : pandas.io.sql.SQLTable
+        conn : sqlalchemy.engine.Engine or sqlalchemy.engine.Connection
+        keys : list of str
+            Column names
+        data_iter : Iterable that iterates the values to be inserted
+        """
+        # gets a DBAPI connection that can provide a cursor
+        dbapi_conn = conn.connection
+        with dbapi_conn.cursor() as cur:
+            s_buf = StringIO()
+            writer = csv.writer(s_buf)
+            writer.writerows(data_iter)
+            s_buf.seek(0)
 
-# List all files in path
-files = os.listdir(path)
-uploaded = []
+            columns = ', '.join(['"{}"'.format(k) for k in keys])
+            if table.schema:
+                table_name = '{}.{}'.format(table.schema, table.name)
+            else:
+                table_name = table.name
 
-for file in files:
-    # Check loaded files
-    if file in uploaded:
-        continue
+            sql = 'COPY {} ({}) FROM STDIN WITH CSV'.format(
+                table_name, columns)
+            cur.copy_expert(sql=sql, file=s_buf)
 
-    temp_file = io.BytesIO()
+    def upload_to_postgresql(self):
+        # Set layout, in order to facilitate the reading of the base a pattern was created in the first two digits, being:
+        # st = string
+        # cd = code
+        # dt = date
 
-    # Select layout from filename
-    model = file.replace('.zip', '').split('.')[-1].replace('CSV', '') if file.find('SIMPLES') < 0 else 'SIMPLES'
+        if self.engine is None:
+            # Create postgresql engine 
+            self.engine = create_engine(f'postgresql://{self.user}:{self.password}@{self.serverip}/postgres?options=-csearch_path%3D{self.schema}')
 
-    # Unzip file into memory
-    with zipfile.ZipFile(path + file, 'r') as zip_ref:
-        temp_file.write(zip_ref.read(zip_ref.namelist()[0]))
+        layout_files = {'EMPRE': {'columns':
+                                {'st_cnpj_base': [], 'st_razao_social': [], 'cd_natureza_juridica': [], 'cd_qualificacao': [],
+                                    'vl_capital_social': [], 'cd_porte_empresa': [], 'st_ente_federativo': []},
+                                'table_name_db': 'tb_empresa'},
+                        'ESTABELE': {'columns':
+                                    {'st_cnpj_base': [], 'st_cnpj_ordem': [], 'st_cnpj_dv': [], 'cd_matriz_filial': [], 'st_nome_fantasia': [], 'cd_situacao_cadastral': [],
+                                    'dt_situacao_cadastral': [], 'cd_motivo_situacao_cadastral': [], 'st_cidade_exterior': [], 'cd_pais': [], 'dt_inicio_atividade': [],
+                                    'cd_cnae_principal': [], 'cd_cnae_secundario': [], 'st_tipo_logradouro': [], 'st_logradouro': [], 'st_numero': [], 'st_complemento': [],
+                                    'st_bairro': [], 'st_cep': [], 'st_uf': [], 'cd_municipio': [], 'st_ddd1': [], 'st_telefone1': [], 'st_ddd2': [], 'st_telefone2': [],
+                                    'st_ddd_fax': [], 'st_fax': [], 'st_email': [], 'st_situacao_especial': [], 'dt_situacao_especial': []
+                                    }, 'table_name_db': 'tb_estabelecimento'},
+                        'SIMPLES': {'columns':
+                                    {'st_cnpj_base': [], 'st_opcao_simples': [], 'dt_opcao_simples': [], 'dt_exclusao_simples': [],
+                                    'st_opcao_mei': [], 'dt_opcao_mei': [], 'dt_exclusao_mei': []
+                                    }, 'table_name_db': 'tb_dados_simples'},
+                        'SOCIO': {'columns':
+                                {'st_cnpj_base': [], 'cd_tipo': [], 'st_nome': [], 'st_cpf_cnpj': [], 'cd_qualificacao': [], 'dt_entrada': [],
+                                    'cd_pais': [], 'st_representante': [], 'st_nome_representante': [], 'cd_qualificacao_representante': [], 'cd_faixa_etaria': []},
+                                'table_name_db': 'tb_socio'},
+                        'PAIS': {'columns': {'cd_pais': [], 'st_pais': []}, 'table_name_db': 'tb_pais'},
+                        'MUNIC': {'columns': {'cd_municipio': [], 'st_municipio': []}, 'table_name_db': 'tb_municipio'},
+                        'QUALS': {'columns': {'cd_qualificacao': [], 'st_qualificacao': []}, 'table_name_db': 'tb_qualificacao_socio'},
+                        'NATJU': {'columns': {'cd_natureza_juridica': [], 'st_natureza_juridica': []}, 'table_name_db': 'tb_natureza_juridica'},
+                        'MOTI': {'columns': {'cd_motivo_situacao_cadastral': [], 'st_motivo_situacao_cadastral': []}, 'table_name_db': 'tb_motivo_situacao_cadastral'},
+                        'CNAE': {'columns': {'cd_cnae': [], 'st_cnae': []}, 'table_name_db': 'tb_cnae'}
+                        }
 
-    # Indicator back to zero
-    temp_file.seek(0)
+        if self.uploaded == []:
+            # List all files in path
+            uploaded = []
+        else:
+            uploaded = self.uploaded
 
-    # Read csv's
-    for chunk in pd.read_csv(temp_file, delimiter=';', header=None, chunksize=65000, names=list(layout_files[model]['columns'].keys()), iterator=True, dtype=str, encoding="ISO-8859-1"):
-        # Format date columns
-        for i in chunk.columns[chunk.columns.str.contains('dt_')]:
-            chunk.loc[chunk[i] == '00000000', i] = None
-            chunk.loc[chunk[i] == '0', i] = None
-            chunk[i] = pd.to_datetime(
-                chunk[i], format='%Y%m%d', errors='coerce')
+        # Create table with zero records
+        for table in layout_files.keys():
+            if sum([i.find(table) > 0 for i in uploaded]) > 0:
+                continue
+            if table == 'EMPRE':
+                continue
 
-        # Using Try for connection attempts, if the connection is lost, wait 60 seconds to retry
-        try:
-            chunk.to_sql(layout_files[model]['table_name_db'],
-                         engine, if_exists="append", index=False)
-        except:
-            time.sleep(60)
-            chunk.to_sql(layout_files[model]['table_name_db'],
-                         engine, if_exists="append", index=False)
+            df = pd.DataFrame(layout_files[table]['columns'], dtype=str)
+            df.to_sql(layout_files[table]['table_name_db'], self.engine, if_exists="replace", index=False)
 
-    # Store processed filenames
-    uploaded.append(file)
+        for file in self.files:
+            # Check loaded files
+            if file in uploaded:
+                continue
+
+            temp_file = io.BytesIO()
+            # Select layout from filename
+            model = file.replace('.zip', '').split('.')[-1].replace('CSV', '') if file.find('SIMPLES') < 0 else 'SIMPLES'
+            # Unzip file into memory
+            with zipfile.ZipFile(file, 'r') as zip_ref:
+                temp_file.write(zip_ref.read(zip_ref.namelist()[0]))
+
+            # Indicator back to zero
+            temp_file.seek(0)
+
+            # Read csv's
+            for chunk in pd.read_csv(temp_file, delimiter=';', header=None, chunksize=65000, names=list(layout_files[model]['columns'].keys()), iterator=True, dtype=str, encoding="ISO-8859-1"):
+                # Format date columns
+                for i in chunk.columns[chunk.columns.str.contains('dt_')]:
+                    chunk.loc[chunk[i] == '00000000', i] = None
+                    chunk.loc[chunk[i] == '0', i] = None
+                    chunk[i] = pd.to_datetime(chunk[i], format='%Y%m%d', errors='coerce')
+
+                chunk.fillna('', inplace = True)
+
+                # Using Try for connection attempts, if the connection is lost, wait 60 seconds to retry
+                try:
+                    chunk.to_sql(layout_files[model]['table_name_db'], self.engine, if_exists="append", index=False, method= base_cnpj.psql_insert_copy)
+                except:
+                    time.sleep(60)
+                    chunk.to_sql(layout_files[model]['table_name_db'], self.engine, if_exists="append", index=False, method= base_cnpj.psql_insert_copy)
+
+            # Store processed filenames
+            uploaded.append(file)
+        
+        self.uploaded = uploaded
+
+    def daily_routine(self, download = True, upload = True):
+        lines = '01/01/1900'
+        if os.path.exists('info.txt'):
+            with open('info.txt', 'r') as f:
+                lines = f.readlines()
+
+        if self.get_last_update() == lines[1]:
+            return "Nothing to do!"
+        else:
+            if download:
+                self.start_download()
+            if upload:
+                self.upload_to_postgresql()
+
+            with open('info.txt', 'w') as f:
+                f.write('DATE_LAST_UPDATE\n{}'.format(self.get_last_update()))
+
+            return "Updated: {}".format(self.get_last_update())
+
+if __name__ == '__main__':
+    obj = base_cnpj(USER, PASSWORD, SERVER_IP, SCHEMA)
+    print(obj.daily_routine(download = True, upload = True))
