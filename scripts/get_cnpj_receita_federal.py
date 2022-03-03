@@ -129,8 +129,6 @@ class base_cnpj:
         for table in layout_files.keys():
             if sum([i.find(table) > 0 for i in uploaded]) > 0:
                 continue
-            if table == 'EMPRE':
-                continue
 
             df = pd.DataFrame(layout_files[table]['columns'], dtype=str)
             df.to_sql(layout_files[table]['table_name_db'], self.engine, if_exists="replace", index=False)
