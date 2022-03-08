@@ -1,0 +1,8 @@
+# File from CNPJ routine
+info.txt
+
+# Cache
+__pycache__/
+
+# Gantt Chart
+gantt.png
